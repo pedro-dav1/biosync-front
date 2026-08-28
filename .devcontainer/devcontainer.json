@@ -1,0 +1,17 @@
+{
+  "name": "BioSync Front",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "esbenp.prettier-vscode",
+        "bradlc.vscode-tailwindcss"
+      ]
+    }
+  },
+  "postCreateCommand": "npm install && cp -n .env.example .env.local || true",
+  "forwardPorts": [5173],
+  "portsAttributes": {
+    "5173": { "label": "BioSync (Vite)", "onAutoForward": "openPreview" }
+  }
+}
