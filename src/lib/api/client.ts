@@ -107,8 +107,8 @@ interface RequestOptions {
 }
 
 function montarUrl(path: string, query?: RequestOptions["query"]) {
-  const url = new URL(`${API_BASE_URL}${path}`);
-  if (query) {
+  const base = API_BASE_URL.startsWith("http") ? API_BASE_URL : `${window.location.origin}${API_BASE_URL}`;
+  const url = new URL(`${base}${path}`);  if (query) {
     for (const [chave, valor] of Object.entries(query)) {
       if (valor !== undefined && valor !== null && valor !== "") {
         url.searchParams.set(chave, String(valor));

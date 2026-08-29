@@ -20,6 +20,9 @@ export default defineConfig({
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },
   },
-  server: { host: true, port: 5173 },
-  assetsInclude: ['**/*.svg', '**/*.csv'],
+  server: {
+    host: true,
+    port: 5173,
+    proxy: { '/api': { target: 'http://localhost:8000', changeOrigin: true } },
+  },  assetsInclude: ['**/*.svg', '**/*.csv'],
 })
