@@ -10,6 +10,7 @@ import { Sidebar } from "./components/Sidebar";
 import { AIAssistant } from "./components/AIAssistant";
 import { TopBar } from "./components/TopBar";
 import { LoadingScreen } from "./components/LoadingScreen";
+import { IntroScreen } from "./components/IntroScreen";
 import { NeuralBackground } from "./components/NeuralBackground";
 import { Toaster } from "sonner";
 import { motion, AnimatePresence } from "motion/react";
@@ -17,6 +18,24 @@ import { motion, AnimatePresence } from "motion/react";
 export default function App() {
   const { isLoggedIn, isAdmin, carregandoSessao, logout } = useAuth();
   const [currentRoute, setCurrentRoute] = useState("dashboard");
+  // A abertura roda uma vez por aba. Recarregar durante o desenvolvimento
+  // não repete a animação; abrir uma aba nova sim.
+  const [mostrarIntro, setMostrarIntro] = useState(() => {
+    try {
+      return sessionStorage.getItem("biosyn.intro") !== "visto";
+    } catch {
+      return true;
+    }
+  });
+
+  const encerrarIntro = () => {
+    try {
+      sessionStorage.setItem("biosyn.intro", "visto");
+    } catch {
+      /* ignora */
+    }
+    setMostrarIntro(false);
+  };
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
@@ -38,6 +57,10 @@ export default function App() {
     logout();
     setCurrentRoute("dashboard");
   };
+
+  if (mostrarIntro) {
+    return <IntroScreen onFinish={encerrarIntro} />;
+  }
 
   // Reidratando a sessão a partir do token salvo.
   if (carregandoSessao) {

@@ -50,9 +50,9 @@ let usuarios = [
 ];
 
 const dashboards = [
-  { id_dashboard: 1, nome_aba: "Visão Geral", url_embbed: "https://app.powerbi.com/view?r=EXEMPLO_VISAO_GERAL" },
-  { id_dashboard: 2, nome_aba: "População", url_embbed: "https://app.powerbi.com/view?r=EXEMPLO_POPULACAO" },
-  { id_dashboard: 3, nome_aba: "Hospitais", url_embbed: "https://app.powerbi.com/view?r=EXEMPLO_HOSPITAIS" },
+  { id_dashboard: 1, nome_aba: "Visão Geral", url_embbed: "https://datastudio.google.com/embed/reporting/cdc6ffc3-bf66-4968-aaaa-5c67983e3213/page/nxvrE" },
+  { id_dashboard: 2, nome_aba: "População", url_embbed: "https://datastudio.google.com/embed/reporting/67de9620-dc76-4ea1-affe-861233c73582/page/6HUrF" },
+  { id_dashboard: 3, nome_aba: "Hospitais", url_embbed: "https://datastudio.google.com/embed/reporting/6e4cf3ea-e7c5-46f4-b945-24695bbb215f/page/DkGLF" },
 ];
 
 const metricas = [
