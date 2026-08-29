@@ -1,19 +1,25 @@
-import logoImg from "../../imports/Gemini_Generated_Image_cxoluwcxoluwcxol.png";
+import logoCompleta from "../../imports/biosyn-logo.png";
+import simbolo from "../../imports/biosyn-mark.png";
 
-export function Logo({ className = "", size = "md" }: { className?: string; size?: "sm" | "md" | "lg" }) {
-  const sizeClasses = {
-    sm: "h-6",
-    md: "h-10",
-    lg: "h-16"
-  };
+interface LogoProps {
+  className?: string;
+  size?: "sm" | "md" | "lg";
+  /** "completa" traz símbolo + palavra; "simbolo" traz só a marca. */
+  variante?: "completa" | "simbolo";
+}
+
+const alturas = { sm: "h-7", md: "h-11", lg: "h-24" };
+
+export function Logo({ className = "", size = "md", variante = "completa" }: LogoProps) {
+  const src = variante === "simbolo" ? simbolo : logoCompleta;
 
   return (
-    <div className={`flex items-center gap-3 ${className}`}>
+    <div className={`flex items-center ${className}`}>
       <img
-        src={logoImg}
+        src={src}
         alt="BIOSYN"
-        className={`${sizeClasses[size]} object-contain`}
-        style={{ filter: "drop-shadow(0 0 20px rgba(0, 255, 163, 0.5))" }}
+        className={`${alturas[size]} object-contain`}
+        style={{ filter: "drop-shadow(0 0 18px rgba(0, 255, 163, 0.35))" }}
       />
     </div>
   );

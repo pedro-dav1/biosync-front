@@ -1,47 +1,48 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { Logo } from "./Logo";
+import simbolo from "../../imports/biosyn-mark.png";
 
 interface IntroScreenProps {
-  /** Chamado quando a animação termina ou o usuário pula. */
   onFinish: () => void;
-  /** Duração total em ms. */
   duracao?: number;
 }
 
-interface No {
+interface Particula {
+  /** posição atual */
   x: number;
   y: number;
-  vx: number;
-  vy: number;
+  /** destino: um ponto da silhueta do símbolo */
+  dx: number;
+  dy: number;
+  atraso: number;
 }
 
 /**
- * Abertura da plataforma: rede neural que se forma, converge para o centro
- * e revela a marca.
+ * Abertura da plataforma.
  *
- * É pulável com clique ou qualquer tecla, e respeita a preferência de
- * movimento reduzido do sistema — quem tem essa opção ligada vê apenas
- * um fade curto.
+ * As partículas nascem espalhadas e convergem para a silhueta do símbolo
+ * do BIOSYN — os destinos são extraídos do próprio PNG da marca, então a
+ * forma montada é sempre fiel ao logo, mesmo que o arquivo mude.
+ *
+ * Depois de montada, a marca real aparece por cima e as partículas se
+ * apagam. Pulável com clique ou tecla; respeita movimento reduzido.
  */
-export function IntroScreen({ onFinish, duracao = 2800 }: IntroScreenProps) {
+export function IntroScreen({ onFinish, duracao = 5000 }: IntroScreenProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [saindo, setSaindo] = useState(false);
+  const [montado, setMontado] = useState(false);
 
   const movimentoReduzido =
     typeof window !== "undefined" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  const duracaoReal = movimentoReduzido ? 600 : duracao;
+  const duracaoReal = movimentoReduzido ? 700 : duracao;
 
-  // Encerramento: dispara o fade e avisa o App quando ele acaba.
   useEffect(() => {
     const encerrar = () => setSaindo(true);
     const timer = setTimeout(encerrar, duracaoReal);
-
     window.addEventListener("keydown", encerrar);
     window.addEventListener("click", encerrar);
-
     return () => {
       clearTimeout(timer);
       window.removeEventListener("keydown", encerrar);
@@ -51,11 +52,20 @@ export function IntroScreen({ onFinish, duracao = 2800 }: IntroScreenProps) {
 
   useEffect(() => {
     if (!saindo) return;
-    const timer = setTimeout(onFinish, 500);
+    const timer = setTimeout(onFinish, 600);
     return () => clearTimeout(timer);
   }, [saindo, onFinish]);
 
-  // Rede de nós em canvas: leve, e mais fluida que animar SVG nó a nó.
+  // A marca real entra quando as partículas terminam de se montar.
+  useEffect(() => {
+    if (movimentoReduzido) {
+      setMontado(true);
+      return;
+    }
+    const timer = setTimeout(() => setMontado(true), duracaoReal * 0.62);
+    return () => clearTimeout(timer);
+  }, [duracaoReal, movimentoReduzido]);
+
   useEffect(() => {
     if (movimentoReduzido) return;
     const canvas = canvasRef.current;
@@ -72,120 +82,179 @@ export function IntroScreen({ onFinish, duracao = 2800 }: IntroScreenProps) {
     canvas.style.height = `${altura}px`;
     ctx.scale(dpr, dpr);
 
-    const nos: No[] = Array.from({ length: 46 }, () => ({
-      x: Math.random() * largura,
-      y: Math.random() * altura,
-      vx: (Math.random() - 0.5) * 0.45,
-      vy: (Math.random() - 0.5) * 0.45,
-    }));
-
-    const centroX = largura / 2;
-    const centroY = altura / 2;
-    const inicio = performance.now();
     let frame = 0;
+    let cancelado = false;
 
-    const desenhar = (agora: number) => {
-      const t = Math.min((agora - inicio) / duracaoReal, 1);
-      ctx.clearRect(0, 0, largura, altura);
+    const img = new Image();
+    img.src = simbolo;
 
-      for (const no of nos) {
-        no.x += no.vx;
-        no.y += no.vy;
-        if (no.x < 0 || no.x > largura) no.vx *= -1;
-        if (no.y < 0 || no.y > altura) no.vy *= -1;
+    img.onload = () => {
+      if (cancelado) return;
 
-        // Na segunda metade, os nós são puxados para o centro.
-        if (t > 0.5) {
-          const forca = (t - 0.5) * 0.06;
-          no.x += (centroX - no.x) * forca;
-          no.y += (centroY - no.y) * forca;
+      // Lê o PNG num canvas auxiliar e coleta pixels opacos: são os destinos.
+      const lado = Math.min(280, Math.min(largura, altura) * 0.32);
+      const escala = lado / Math.max(img.width, img.height);
+      const lg = Math.round(img.width * escala);
+      const at = Math.round(img.height * escala);
+
+      const aux = document.createElement("canvas");
+      aux.width = lg;
+      aux.height = at;
+      const auxCtx = aux.getContext("2d");
+      if (!auxCtx) return;
+      auxCtx.drawImage(img, 0, 0, lg, at);
+      const dados = auxCtx.getImageData(0, 0, lg, at).data;
+
+      const offsetX = largura / 2 - lg / 2;
+      const offsetY = altura / 2 - at / 2 - 30;
+
+      const destinos: Array<{ x: number; y: number }> = [];
+      const passo = 3;
+      for (let y = 0; y < at; y += passo) {
+        for (let x = 0; x < lg; x += passo) {
+          if (dados[(y * lg + x) * 4 + 3] > 130) {
+            destinos.push({ x: offsetX + x, y: offsetY + y });
+          }
         }
       }
 
-      // Conexões entre nós próximos.
-      const alcance = 170;
-      for (let i = 0; i < nos.length; i++) {
-        for (let j = i + 1; j < nos.length; j++) {
-          const dx = nos[i].x - nos[j].x;
-          const dy = nos[i].y - nos[j].y;
-          const dist = Math.hypot(dx, dy);
-          if (dist > alcance) continue;
+      const particulas: Particula[] = destinos.map((d, i) => {
+        const angulo = Math.random() * Math.PI * 2;
+        const raio = Math.max(largura, altura) * (0.35 + Math.random() * 0.45);
+        return {
+          x: largura / 2 + Math.cos(angulo) * raio,
+          y: altura / 2 + Math.sin(angulo) * raio,
+          dx: d.x,
+          dy: d.y,
+          atraso: (i / Math.max(destinos.length, 1)) * 0.28 + Math.random() * 0.12,
+        };
+      });
 
-          const forca = (1 - dist / alcance) * Math.min(t * 2.2, 1);
-          ctx.strokeStyle = `rgba(0, 255, 163, ${forca * 0.34})`;
+      const inicio = performance.now();
+      const fase = duracaoReal * 0.62;
+
+      const suavizar = (t: number) => 1 - Math.pow(1 - t, 3);
+
+      const desenhar = (agora: number) => {
+        const t = Math.min((agora - inicio) / fase, 1);
+        ctx.clearRect(0, 0, largura, altura);
+
+        // Linhas de blueprint: enquadram a marca enquanto ela se monta.
+        const guia = Math.min(Math.max((t - 0.25) / 0.4, 0), 1);
+        if (guia > 0) {
+          const opacidade = guia * (1 - Math.max((t - 0.85) / 0.15, 0)) * 0.28;
+          ctx.strokeStyle = `rgba(0,255,163,${opacidade})`;
           ctx.lineWidth = 1;
+          const m = 46;
+          const l = offsetX - m;
+          const c = offsetX + lg + m;
+          const cima = offsetY - m;
+          const baixo = offsetY + at + m;
           ctx.beginPath();
-          ctx.moveTo(nos[i].x, nos[i].y);
-          ctx.lineTo(nos[j].x, nos[j].y);
+          ctx.moveTo(l, cima + (baixo - cima) * (1 - guia));
+          ctx.lineTo(l, baixo);
+          ctx.moveTo(c, cima);
+          ctx.lineTo(c, baixo - (baixo - cima) * (1 - guia));
+          ctx.moveTo(l + (c - l) * (1 - guia), cima);
+          ctx.lineTo(c, cima);
+          ctx.moveTo(l, baixo);
+          ctx.lineTo(c - (c - l) * (1 - guia), baixo);
           ctx.stroke();
         }
-      }
 
-      for (const no of nos) {
-        ctx.fillStyle = `rgba(108, 92, 231, ${Math.min(t * 2, 1) * 0.75})`;
-        ctx.beginPath();
-        ctx.arc(no.x, no.y, 1.9, 0, Math.PI * 2);
-        ctx.fill();
-      }
+        for (const p of particulas) {
+          const local = Math.min(Math.max((t - p.atraso) / (1 - p.atraso), 0), 1);
+          const e = suavizar(local);
+          const x = p.x + (p.dx - p.x) * e;
+          const y = p.y + (p.dy - p.y) * e;
+
+          // Verde ao chegar, roxo enquanto viaja.
+          const cor = e > 0.9 ? "0,255,163" : "108,92,231";
+          ctx.fillStyle = `rgba(${cor},${0.25 + e * 0.7})`;
+          ctx.fillRect(x, y, 1.7, 1.7);
+        }
+
+        frame = requestAnimationFrame(desenhar);
+      };
 
       frame = requestAnimationFrame(desenhar);
     };
 
-    frame = requestAnimationFrame(desenhar);
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelado = true;
+      cancelAnimationFrame(frame);
+    };
   }, [duracaoReal, movimentoReduzido]);
 
   return (
     <motion.div
       animate={{ opacity: saindo ? 0 : 1 }}
-      transition={{ duration: 0.5, ease: "easeInOut" }}
+      transition={{ duration: 0.6, ease: "easeInOut" }}
       className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-[#081419]"
     >
-      <canvas ref={canvasRef} className="absolute inset-0" aria-hidden="true" />
+      <canvas
+        ref={canvasRef}
+        aria-hidden="true"
+        className="absolute inset-0 transition-opacity duration-700"
+        style={{ opacity: montado ? 0 : 1 }}
+      />
 
-      {/* Halo central */}
       <div
-        className="pointer-events-none absolute left-1/2 top-1/2 h-[520px] w-[520px] -translate-x-1/2 -translate-y-1/2 rounded-full"
+        className="pointer-events-none absolute left-1/2 top-1/2 h-[560px] w-[560px] -translate-x-1/2 -translate-y-1/2 rounded-full"
         style={{
           background:
-            "radial-gradient(circle, rgba(0,255,163,0.13) 0%, rgba(108,92,231,0.06) 45%, transparent 70%)",
+            "radial-gradient(circle, rgba(0,255,163,0.12) 0%, rgba(108,92,231,0.05) 45%, transparent 70%)",
         }}
       />
 
-      <div className="relative text-center">
-        <motion.div
-          initial={{ scale: 0.9, opacity: 0, filter: "blur(8px)" }}
-          animate={{ scale: 1, opacity: 1, filter: "blur(0px)" }}
-          transition={{ duration: 0.9, delay: 0.35, ease: [0.22, 1, 0.36, 1] }}
-        >
-          <Logo size="lg" className="mb-7 justify-center" />
-        </motion.div>
+      <div className="relative flex flex-col items-center">
+        <motion.img
+          src={simbolo}
+          alt=""
+          aria-hidden="true"
+          initial={{ opacity: 0, scale: 1.04 }}
+          animate={montado ? { opacity: 1, scale: 1 } : {}}
+          transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+          style={{
+            height: "min(280px, 32vmin)",
+            filter: "drop-shadow(0 0 30px rgba(0,255,163,0.4))",
+          }}
+        />
 
         <motion.div
           initial={{ scaleX: 0 }}
-          animate={{ scaleX: 1 }}
-          transition={{ duration: 1.1, delay: 0.9, ease: "easeInOut" }}
-          className="mx-auto h-px w-72 origin-center bg-gradient-to-r from-transparent via-[#00FFA3] to-transparent"
+          animate={montado ? { scaleX: 1 } : {}}
+          transition={{ duration: 0.9, delay: 0.25, ease: "easeInOut" }}
+          className="mt-9 h-px w-72 origin-center bg-gradient-to-r from-transparent via-[#00FFA3] to-transparent"
         />
 
-        <motion.p
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 1.25 }}
-          className="mt-6 text-sm uppercase tracking-[0.32em] text-[rgba(255,255,255,0.62)]"
+        <motion.h1
+          initial={{ opacity: 0, y: 10 }}
+          animate={montado ? { opacity: 1, y: 0 } : {}}
+          transition={{ duration: 0.7, delay: 0.4 }}
+          className="mt-6 text-2xl font-bold uppercase tracking-[0.5em] text-white"
         >
-          Inteligência em Saúde Pública
-        </motion.p>
+          Biosyn
+        </motion.h1>
 
         <motion.p
           initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.6, delay: 2 }}
-          className="mt-10 text-[11px] uppercase tracking-[0.2em] text-[rgba(255,255,255,0.3)]"
+          animate={montado ? { opacity: 1 } : {}}
+          transition={{ duration: 0.7, delay: 0.6 }}
+          className="mt-3 text-xs uppercase tracking-[0.3em] text-[rgba(255,255,255,0.55)]"
         >
-          Clique para entrar
+          Inteligência em Saúde Pública
         </motion.p>
       </div>
+
+      <motion.p
+        initial={{ opacity: 0 }}
+        animate={montado ? { opacity: 1 } : {}}
+        transition={{ duration: 0.6, delay: 1.1 }}
+        className="absolute bottom-12 text-[11px] uppercase tracking-[0.2em] text-[rgba(255,255,255,0.28)]"
+      >
+        Clique para entrar
+      </motion.p>
     </motion.div>
   );
 }
