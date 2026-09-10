@@ -15,7 +15,7 @@ const UFS = [
 ];
 
 /**
- * Disparo de alerta por SMS, segmentado por UF.
+ * Disparo de alerta por e-mail, segmentado por UF.
  *
  * A API não tem histórico nem listagem de alertas — é uma ação única,
  * sem estado persistente do lado do front. Cada envio é independente.
@@ -39,7 +39,7 @@ export function AlertsPage() {
       const resposta = await api.alertas.disparar({ mensagem: mensagem.trim(), estado_uf: uf });
       setResultado(resposta);
     } catch (e) {
-      // FALHA_ENVIO_ALERTA (502): o gateway de SMS recusou o lote — nada foi
+      // FALHA_ENVIO_ALERTA (502): o provedor de e-mail recusou o lote — nada foi
       // registrado. Mostramos a mensagem real da API, não uma genérica.
       setErro(mensagemDeErro(e));
       if (!(e instanceof ApiError)) console.error(e);
@@ -63,7 +63,7 @@ export function AlertsPage() {
           Central de Alertas
         </h1>
         <p className="text-[rgba(255,255,255,0.6)]">
-          Disparo de SMS segmentado por estado • Ação imediata, sem confirmação prévia
+          Disparo de e-mail segmentado por estado • Ação imediata, sem confirmação prévia
         </p>
       </div>
 
@@ -93,7 +93,7 @@ export function AlertsPage() {
                   ) : (
                     <>
                       <strong>{resultado.destinatarios.toLocaleString("pt-BR")}</strong> destinatário(s)
-                      receberam o SMS
+                      receberam o e-mail
                     </>
                   )}
                 </span>
@@ -126,7 +126,7 @@ export function AlertsPage() {
                   value={mensagem}
                   onChange={(e) => setMensagem(e.target.value)}
                   rows={5}
-                  placeholder="Escreva a mensagem que será enviada por SMS..."
+                  placeholder="Escreva a mensagem que será enviada por e-mail..."
                   className="w-full resize-none rounded-lg border border-[rgba(0,255,163,0.15)] bg-[rgba(255,255,255,0.05)] px-4 py-3 text-white placeholder-[rgba(255,255,255,0.3)] transition-colors focus:border-[#00FFA3] focus:outline-none"
                 />
               </div>
