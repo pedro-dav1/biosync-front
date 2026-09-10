@@ -4,317 +4,294 @@ import {
   UserPlus,
   Shield,
   MoreVertical,
-  CheckCircle,
-  XCircle,
   Pencil,
   Trash2,
   X,
+  AlertCircle,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { GlowCard } from "../components/GlowCard";
 import { toast } from "sonner";
+import { api } from "../../lib/api/endpoints";
+import { ApiError } from "../../lib/api/client";
+import { mensagemDeErro, useResource } from "../../lib/api/useResource";
+import type {
+  CargoRef,
+  Endereco,
+  OrganizacoesResponse,
+  UsuarioCreateRequest,
+  UsuarioListaItem,
+  UsuariosListaResponse,
+} from "../../lib/api/types";
 
-interface User {
-  id: number;
-  name: string;
+function getRoleBadgeColor(cargo: string) {
+  const c = cargo.toLowerCase();
+  if (c.includes("admin")) return "bg-[rgba(255,59,92,0.2)] text-[#FF3B5C] border-[rgba(255,59,92,0.3)]";
+  if (c.includes("gestor")) return "bg-[rgba(108,92,231,0.2)] text-[#6C5CE7] border-[rgba(108,92,231,0.3)]";
+  if (c.includes("epidemi")) return "bg-[rgba(0,255,163,0.2)] text-[#00FFA3] border-[rgba(0,255,163,0.3)]";
+  return "bg-[rgba(0,212,255,0.2)] text-[#00D4FF] border-[rgba(0,212,255,0.3)]";
+}
+
+function iniciais(nome: string) {
+  return nome
+    .split(" ")
+    .filter(Boolean)
+    .map((n) => n[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
+const TAMANHO_PAGINA = 20;
+
+type FormState = {
+  nome: string;
+  sobrenome: string;
+  cpf: string;
   email: string;
-  role: string;
-  organization: string;
-  status: "active" | "inactive";
-  mfa: boolean;
-  lastAccess: string;
-}
-
-const initialUsers: User[] = [
-  {
-    id: 1,
-    name: "Dr. João Silva",
-    email: "joao.silva@saude.gov.br",
-    role: "Gestor Estadual",
-    organization: "Secretaria de Saúde - SP",
-    status: "active",
-    mfa: true,
-    lastAccess: "Há 5 minutos",
-  },
-  {
-    id: 2,
-    name: "Dra. Maria Santos",
-    email: "maria.santos@saude.gov.br",
-    role: "Analista Epidemiológico",
-    organization: "Ministério da Saúde",
-    status: "active",
-    mfa: true,
-    lastAccess: "Há 1 hora",
-  },
-  {
-    id: 3,
-    name: "Carlos Oliveira",
-    email: "carlos.oliveira@saude.gov.br",
-    role: "Técnico Hospitalar",
-    organization: "Hospital das Clínicas - RJ",
-    status: "active",
-    mfa: false,
-    lastAccess: "Há 3 horas",
-  },
-  {
-    id: 4,
-    name: "Ana Paula Costa",
-    email: "ana.costa@saude.gov.br",
-    role: "Administrador",
-    organization: "DATASUS",
-    status: "active",
-    mfa: true,
-    lastAccess: "Há 20 minutos",
-  },
-  {
-    id: 5,
-    name: "Roberto Ferreira",
-    email: "roberto.ferreira@saude.gov.br",
-    role: "Gestor Estadual",
-    organization: "Secretaria de Saúde - BA",
-    status: "inactive",
-    mfa: false,
-    lastAccess: "Há 15 dias",
-  },
-];
-
-const roles = [
-  "Administrador",
-  "Gestor Estadual",
-  "Analista Epidemiológico",
-  "Técnico Hospitalar",
-];
-
-function getRoleBadgeColor(role: string) {
-  switch (role) {
-    case "Administrador":
-      return "bg-[rgba(255,59,92,0.2)] text-[#FF3B5C] border-[rgba(255,59,92,0.3)]";
-    case "Gestor Estadual":
-      return "bg-[rgba(108,92,231,0.2)] text-[#6C5CE7] border-[rgba(108,92,231,0.3)]";
-    case "Analista Epidemiológico":
-      return "bg-[rgba(0,255,163,0.2)] text-[#00FFA3] border-[rgba(0,255,163,0.3)]";
-    default:
-      return "bg-[rgba(0,212,255,0.2)] text-[#00D4FF] border-[rgba(0,212,255,0.3)]";
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/* Busca por proximidade de nome                                       */
-/* ------------------------------------------------------------------ */
-
-/** Remove acentos e caixa, pra "joao" casar com "João". */
-function normalize(text: string) {
-  return text
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim();
-}
-
-/** Distância de Levenshtein: quantas edições separam duas palavras. */
-function levenshtein(a: string, b: string) {
-  if (a === b) return 0;
-  if (!a.length) return b.length;
-  if (!b.length) return a.length;
-
-  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
-
-  for (let i = 1; i <= a.length; i++) {
-    const current = [i];
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      current[j] = Math.min(
-        current[j - 1] + 1,      // inserção
-        previous[j] + 1,         // remoção
-        previous[j - 1] + cost   // substituição
-      );
-    }
-    previous = current;
-  }
-
-  return previous[b.length];
-}
-
-/**
- * Score de 0 a 1 do quanto o usuário casa com a busca.
- * 0 = descartado. Quanto maior, mais no topo da lista.
- */
-function matchScore(user: User, rawQuery: string) {
-  const query = normalize(rawQuery);
-  if (!query) return 1;
-
-  const name = normalize(user.name);
-
-  // Casamento exato do começo do nome — melhor resultado possível.
-  if (name.startsWith(query)) return 1;
-  // Trecho aparece em qualquer lugar do nome.
-  if (name.includes(query)) return 0.9;
-
-  // Proximidade palavra por palavra (tolera erro de digitação).
-  const words = name.split(/\s+/);
-  let best = 0;
-  for (const word of words) {
-    if (word.startsWith(query)) {
-      best = Math.max(best, 0.85);
-      continue;
-    }
-    const distance = levenshtein(word, query);
-    // Tolerância cresce com o tamanho da palavra: até ~30% de erro.
-    const tolerance = Math.max(1, Math.floor(word.length * 0.3));
-    if (distance <= tolerance) {
-      best = Math.max(best, 0.8 - distance / (word.length + 1));
-    }
-  }
-  if (best > 0) return best;
-
-  // Fallback: email e organização, com peso menor.
-  if (normalize(user.email).includes(query)) return 0.5;
-  if (normalize(user.organization).includes(query)) return 0.4;
-
-  return 0;
-}
-
-/* ------------------------------------------------------------------ */
-
-const emptyForm = {
-  name: "",
-  email: "",
-  role: roles[1],
-  organization: "",
+  telefone: string;
+  senha: string;
+  is_admin: boolean;
+  cargo_id: number | "";
+  organizacao_id: number | "";
+  endereco: Endereco;
 };
 
-export function UsersPage() {
-  const [users, setUsers] = useState<User[]>(initialUsers);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [openMenuId, setOpenMenuId] = useState<number | null>(null);
-  const [editingUser, setEditingUser] = useState<User | null>(null);
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [form, setForm] = useState(emptyForm);
-  const [confirmDelete, setConfirmDelete] = useState<User | null>(null);
+const enderecoVazio: Endereco = {
+  tipo_logradouro: "Rua",
+  logradouro: "",
+  numero: 0,
+  cep: "",
+  estado_uf: "",
+  cidade: "",
+  complemento: "",
+};
 
+const formVazio: FormState = {
+  nome: "",
+  sobrenome: "",
+  cpf: "",
+  email: "",
+  telefone: "",
+  senha: "",
+  is_admin: false,
+  cargo_id: "",
+  organizacao_id: "",
+  endereco: enderecoVazio,
+};
+
+/** Erros de campo vindos do backend, indexados pelo nome do campo. */
+type ErrosCampo = Record<string, string>;
+
+function extrairErrosCampo(erro: unknown): ErrosCampo {
+  if (!(erro instanceof ApiError) || !erro.campos.length) return {};
+  const mapa: ErrosCampo = {};
+  for (const c of erro.campos) mapa[c.campo] = c.detalhe;
+  return mapa;
+}
+
+export function UsersPage() {
+  // --- busca com debounce: a filtragem é do backend (LIKE no nome) ---
+  const [buscaDigitada, setBuscaDigitada] = useState("");
+  const [busca, setBusca] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setBusca(buscaDigitada.trim()), 350);
+    return () => clearTimeout(t);
+  }, [buscaDigitada]);
+
+  const [pagina, setPagina] = useState(1);
+  useEffect(() => setPagina(1), [busca]);
+
+  const {
+    data: listaUsuarios,
+    loading: carregandoUsuarios,
+    error: erroUsuarios,
+    refetch: recarregarUsuarios,
+  } = useResource<UsuariosListaResponse>(
+    (signal) => api.usuarios.listar({ busca, pagina, tamanho: TAMANHO_PAGINA }, signal),
+    [busca, pagina]
+  );
+
+  const { data: cargosResp } = useResource((signal) => api.apoio.cargos(signal), []);
+  const { data: orgsResp } = useResource<OrganizacoesResponse>(
+    (signal) => api.apoio.organizacoes(signal),
+    []
+  );
+  const cargos: CargoRef[] = cargosResp?.itens ?? [];
+  const organizacoes = orgsResp?.itens ?? [];
+
+  const usuarios = listaUsuarios?.itens ?? [];
+  const total = listaUsuarios?.total ?? 0;
+  const totalPaginas = Math.max(1, Math.ceil(total / TAMANHO_PAGINA));
+
+  // --- menu de ações (3 pontinhos) ---
+  const [openMenuId, setOpenMenuId] = useState<number | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  // Fecha o menu de 3 pontinhos ao clicar fora ou apertar Esc.
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setOpenMenuId(null);
-      }
+    const fecharFora = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpenMenuId(null);
     };
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpenMenuId(null);
-        setIsFormOpen(false);
-        setConfirmDelete(null);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("keydown", handleEscape);
+    const escFecha = (e: KeyboardEvent) => e.key === "Escape" && setOpenMenuId(null);
+    document.addEventListener("mousedown", fecharFora);
+    document.addEventListener("keydown", escFecha);
     return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("keydown", handleEscape);
+      document.removeEventListener("mousedown", fecharFora);
+      document.removeEventListener("keydown", escFecha);
     };
   }, []);
 
-  const filteredUsers = useMemo(() => {
-    return users
-      .map((user) => ({ user, score: matchScore(user, searchQuery) }))
-      .filter((item) => item.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .map((item) => item.user);
-  }, [users, searchQuery]);
+  // --- modal criar/editar ---
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editando, setEditando] = useState<UsuarioListaItem | null>(null);
+  const [form, setForm] = useState<FormState>(formVazio);
+  const [errosCampo, setErrosCampo] = useState<ErrosCampo>({});
+  const [salvando, setSalvando] = useState(false);
 
-  const stats = useMemo(
-    () => [
-      { label: "Total de Usuários", value: users.length, color: "#00FFA3" },
-      {
-        label: "Ativos",
-        value: users.filter((u) => u.status === "active").length,
-        color: "#6C5CE7",
-      },
-      {
-        label: "Com MFA",
-        value: users.filter((u) => u.mfa).length,
-        color: "#00D4FF",
-      },
-      {
-        label: "Inativos",
-        value: users.filter((u) => u.status === "inactive").length,
-        color: "#FFB800",
-      },
-    ],
-    [users]
-  );
-
-  const openCreateForm = () => {
-    setEditingUser(null);
-    setForm(emptyForm);
+  const abrirCriar = () => {
+    setEditando(null);
+    setForm(formVazio);
+    setErrosCampo({});
     setIsFormOpen(true);
   };
 
-  const openEditForm = (user: User) => {
+  const abrirEditar = (u: UsuarioListaItem) => {
     setOpenMenuId(null);
-    setEditingUser(user);
+    setEditando(u);
+    const [nome, ...resto] = u.nome_completo.split(" ");
     setForm({
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      organization: user.organization,
+      nome,
+      sobrenome: resto.join(" "),
+      cpf: "",
+      email: u.email,
+      telefone: u.telefone,
+      senha: "",
+      is_admin: u.is_admin,
+      cargo_id: u.cargo.id_cargo,
+      organizacao_id: u.organizacao.id_organizacao,
+      endereco: enderecoVazio,
     });
+    setErrosCampo({});
     setIsFormOpen(true);
   };
 
-  const handleSave = () => {
-    if (!form.name.trim() || !form.email.trim()) {
-      toast.error("Nome e e-mail são obrigatórios");
+  const validarLocal = (): ErrosCampo => {
+    const e: ErrosCampo = {};
+    if (!form.nome.trim()) e.nome = "Obrigatório.";
+    if (!form.sobrenome.trim()) e.sobrenome = "Obrigatório.";
+    if (!editando && !/^\d{11}$/.test(form.cpf)) e.cpf = "Deve ter 11 dígitos.";
+    if (!form.email.includes("@")) e.email = "E-mail inválido.";
+    if (!/^\d{10,11}$/.test(form.telefone)) e.telefone = "Só dígitos, com DDD.";
+    if (!editando && form.senha.length < 8) e.senha = "Mínimo de 8 caracteres.";
+    if (editando && form.senha && form.senha.length < 8) e.senha = "Mínimo de 8 caracteres.";
+    if (!form.cargo_id) e.cargo_id = "Selecione um cargo.";
+    if (!form.organizacao_id) e.organizacao_id = "Selecione uma organização.";
+    // A API exige endereço tanto na criação quanto na edição — a rota de
+    // listagem não devolve o endereço existente, então mesmo editando é
+    // preciso preencher de novo.
+    if (!form.endereco.logradouro.trim()) e.logradouro = "Obrigatório.";
+    if (!form.endereco.numero) e.numero = "Obrigatório.";
+    if (!/^[A-Za-z]{2}$/.test(form.endereco.estado_uf)) e.estado_uf = "UF com 2 letras.";
+    if (!form.endereco.cidade.trim()) e.cidade = "Obrigatório.";
+    return e;
+  };
+
+  const handleSalvar = async () => {
+    const errosLocais = validarLocal();
+    if (Object.keys(errosLocais).length) {
+      setErrosCampo(errosLocais);
       return;
     }
 
-    if (editingUser) {
-      setUsers((prev) =>
-        prev.map((u) => (u.id === editingUser.id ? { ...u, ...form } : u))
-      );
-      toast.success("Usuário atualizado");
-    } else {
-      const nextId = users.length ? Math.max(...users.map((u) => u.id)) + 1 : 1;
-      setUsers((prev) => [
-        ...prev,
-        {
-          id: nextId,
-          ...form,
-          status: "active",
-          mfa: false,
-          lastAccess: "Nunca acessou",
-        },
-      ]);
-      toast.success("Usuário adicionado");
+    setSalvando(true);
+    setErrosCampo({});
+    try {
+      if (editando) {
+        await api.usuarios.editar(editando.id_usuario, {
+          email: form.email,
+          telefone: form.telefone,
+          nome: form.nome,
+          sobrenome: form.sobrenome,
+          is_admin: form.is_admin,
+          cargo_id: Number(form.cargo_id),
+          organizacao_id: Number(form.organizacao_id),
+          endereco: form.endereco,
+          ...(form.senha ? { senha: form.senha } : {}),
+        });
+        toast.success("Usuário atualizado.");
+      } else {
+        const payload: UsuarioCreateRequest = {
+          cpf: form.cpf,
+          email: form.email,
+          telefone: form.telefone,
+          senha: form.senha,
+          nome: form.nome,
+          sobrenome: form.sobrenome,
+          is_admin: form.is_admin,
+          cargo_id: Number(form.cargo_id),
+          organizacao_id: Number(form.organizacao_id),
+          endereco: form.endereco,
+        };
+        await api.usuarios.criar(payload);
+        toast.success("Usuário adicionado.");
+      }
+      setIsFormOpen(false);
+      recarregarUsuarios();
+    } catch (erro) {
+      const campos = extrairErrosCampo(erro);
+      if (Object.keys(campos).length) {
+        setErrosCampo(campos);
+      } else {
+        toast.error(mensagemDeErro(erro));
+      }
+    } finally {
+      setSalvando(false);
     }
-
-    setIsFormOpen(false);
-    setEditingUser(null);
-    setForm(emptyForm);
   };
 
-  const handleDelete = () => {
+  // --- exclusão ---
+  const [confirmDelete, setConfirmDelete] = useState<UsuarioListaItem | null>(null);
+  const [excluindo, setExcluindo] = useState(false);
+
+  const handleDelete = async () => {
     if (!confirmDelete) return;
-    setUsers((prev) => prev.filter((u) => u.id !== confirmDelete.id));
-    toast.success(`${confirmDelete.name} removido`);
-    setConfirmDelete(null);
+    setExcluindo(true);
+    try {
+      await api.usuarios.desativar(confirmDelete.id_usuario);
+      toast.success(`${confirmDelete.nome_completo} desativado.`);
+      setConfirmDelete(null);
+      recarregarUsuarios();
+    } catch (erro) {
+      // AUTO_DESATIVACAO e outros erros de negócio chegam aqui como toast.
+      toast.error(mensagemDeErro(erro));
+    } finally {
+      setExcluindo(false);
+    }
   };
+
+  const stats = useMemo(
+    () => [
+      { label: "Total (nesta página)", value: usuarios.length, color: "#00FFA3" },
+      { label: "Administradores", value: usuarios.filter((u) => u.is_admin).length, color: "#6C5CE7" },
+      { label: "Total no sistema", value: total, color: "#00D4FF" },
+    ],
+    [usuarios, total]
+  );
 
   return (
     <div className="p-8 space-y-8">
-      {/* Header */}
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-3xl font-bold text-white uppercase tracking-wider mb-2">
             Gerenciamento de Usuários
           </h1>
           <p className="text-[rgba(255,255,255,0.6)]">
-            Controle de acesso e permissões • {users.length} usuários cadastrados
+            Controle de acesso e permissões • {total} usuário(s) cadastrado(s)
           </p>
         </div>
         <button
-          onClick={openCreateForm}
+          onClick={abrirCriar}
           className="px-6 py-3 rounded-lg bg-gradient-to-r from-[#00FFA3] to-[#6C5CE7] text-[#0B1F2A] font-bold uppercase hover:shadow-[0_0_30px_rgba(0,255,163,0.5)] transition-all text-sm flex items-center gap-2"
         >
           <UserPlus size={18} />
@@ -322,23 +299,19 @@ export function UsersPage() {
         </button>
       </div>
 
-      {/* Busca */}
       <GlowCard>
         <div className="relative">
-          <Search
-            size={18}
-            className="absolute left-4 top-1/2 -translate-y-1/2 text-[rgba(255,255,255,0.4)]"
-          />
+          <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-[rgba(255,255,255,0.4)]" />
           <input
             type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            value={buscaDigitada}
+            onChange={(e) => setBuscaDigitada(e.target.value)}
             placeholder="Buscar usuário por nome..."
             className="w-full pl-12 pr-12 py-3 rounded-lg bg-[rgba(255,255,255,0.05)] border border-[rgba(0,255,163,0.15)] text-white placeholder-[rgba(255,255,255,0.3)] focus:border-[#00FFA3] focus:outline-none transition-colors"
           />
-          {searchQuery && (
+          {buscaDigitada && (
             <button
-              onClick={() => setSearchQuery("")}
+              onClick={() => setBuscaDigitada("")}
               aria-label="Limpar busca"
               className="absolute right-4 top-1/2 -translate-y-1/2 text-[rgba(255,255,255,0.4)] hover:text-white transition-colors"
             >
@@ -346,307 +319,377 @@ export function UsersPage() {
             </button>
           )}
         </div>
-        {searchQuery && (
-          <p className="mt-3 text-xs text-[rgba(255,255,255,0.5)]">
-            {filteredUsers.length} resultado(s) por proximidade de nome
-          </p>
-        )}
       </GlowCard>
 
-      {/* Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {stats.map((stat) => (
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {stats.map((s) => (
           <div
-            key={stat.label}
+            key={s.label}
             className="p-4 rounded-lg bg-gradient-to-br from-[rgba(255,255,255,0.05)] to-[rgba(255,255,255,0.02)] border border-[rgba(0,255,163,0.15)]"
           >
-            <p className="text-xs uppercase tracking-wider text-[rgba(255,255,255,0.5)] mb-1">
-              {stat.label}
-            </p>
-            <p className="text-2xl font-bold" style={{ color: stat.color }}>
-              {stat.value}
-            </p>
+            <p className="text-xs uppercase tracking-wider text-[rgba(255,255,255,0.5)] mb-1">{s.label}</p>
+            <p className="text-2xl font-bold" style={{ color: s.color }}>{s.value}</p>
           </div>
         ))}
       </div>
 
-      {/* Tabela */}
       <GlowCard className="overflow-visible">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-[rgba(0,255,163,0.15)]">
-                {["Usuário", "Cargo", "Organização", "Status", "Último Acesso"].map(
-                  (header) => (
-                    <th
-                      key={header}
-                      className="text-left py-4 px-6 text-xs uppercase tracking-wider text-[rgba(255,255,255,0.5)] font-medium"
-                    >
-                      {header}
-                    </th>
-                  )
-                )}
-                <th className="text-center py-4 px-6 text-xs uppercase tracking-wider text-[rgba(255,255,255,0.5)] font-medium">
-                  Ações
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredUsers.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={6}
-                    className="py-12 text-center text-sm text-[rgba(255,255,255,0.5)]"
-                  >
-                    Nenhum usuário encontrado para “{searchQuery}”.
-                  </td>
-                </tr>
-              )}
+        {carregandoUsuarios && (
+          <div className="flex items-center justify-center py-16">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgba(0,255,163,0.2)] border-t-[#00FFA3]" />
+          </div>
+        )}
 
-              {filteredUsers.map((user) => (
-                <tr
-                  key={user.id}
-                  className="border-b border-[rgba(0,255,163,0.05)] hover:bg-[rgba(255,255,255,0.02)] transition-colors"
-                >
-                  <td className="py-4 px-6">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#00FFA3] to-[#6C5CE7] flex items-center justify-center">
-                        <span className="text-sm font-bold text-[#0B1F2A]">
-                          {user.name
-                            .split(" ")
-                            .map((n) => n[0])
-                            .join("")
-                            .slice(0, 2)}
+        {!carregandoUsuarios && erroUsuarios && (
+          <div className="flex flex-col items-center gap-3 py-16 text-center">
+            <AlertCircle size={26} className="text-[#FF3B5C]" />
+            <p className="text-sm text-white">{erroUsuarios}</p>
+            <button
+              onClick={recarregarUsuarios}
+              className="px-4 py-2 rounded-lg border border-[rgba(0,255,163,0.2)] text-sm text-white hover:border-[#00FFA3] transition-colors"
+            >
+              Tentar novamente
+            </button>
+          </div>
+        )}
+
+        {!carregandoUsuarios && !erroUsuarios && (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-[rgba(0,255,163,0.15)]">
+                    {["Usuário", "Cargo", "Organização", "Telefone"].map((h) => (
+                      <th key={h} className="text-left py-4 px-6 text-xs uppercase tracking-wider text-[rgba(255,255,255,0.5)] font-medium">
+                        {h}
+                      </th>
+                    ))}
+                    <th className="text-center py-4 px-6 text-xs uppercase tracking-wider text-[rgba(255,255,255,0.5)] font-medium">
+                      Ações
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {usuarios.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="py-12 text-center text-sm text-[rgba(255,255,255,0.5)]">
+                        Nenhum usuário encontrado{busca ? ` para "${busca}"` : ""}.
+                      </td>
+                    </tr>
+                  )}
+
+                  {usuarios.map((u) => (
+                    <tr key={u.id_usuario} className="border-b border-[rgba(0,255,163,0.05)] hover:bg-[rgba(255,255,255,0.02)] transition-colors">
+                      <td className="py-4 px-6">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#00FFA3] to-[#6C5CE7] flex items-center justify-center">
+                            <span className="text-sm font-bold text-[#0B1F2A]">{iniciais(u.nome_completo)}</span>
+                          </div>
+                          <div>
+                            <p className="font-medium text-white">{u.nome_completo}</p>
+                            <div className="flex items-center gap-2">
+                              <p className="text-xs text-[rgba(255,255,255,0.5)]">{u.email}</p>
+                              {u.is_admin && <Shield size={12} className="text-[#00FFA3]" aria-label="Administrador" />}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-4 px-6">
+                        <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getRoleBadgeColor(u.cargo.nome_cargo)}`}>
+                          {u.cargo.nome_cargo}
                         </span>
-                      </div>
-                      <div>
-                        <p className="font-medium text-white">{user.name}</p>
-                        <div className="flex items-center gap-2">
-                          <p className="text-xs text-[rgba(255,255,255,0.5)]">
-                            {user.email}
-                          </p>
-                          {user.mfa && (
-                            <span title="MFA Ativado" className="inline-flex">
-                            <Shield size={12} className="text-[#00FFA3]" />
-                          </span>
+                      </td>
+                      <td className="py-4 px-6">
+                        <p className="text-sm text-[rgba(255,255,255,0.7)]">{u.organizacao.nome}</p>
+                      </td>
+                      <td className="py-4 px-6">
+                        <p className="text-sm text-[rgba(255,255,255,0.7)]">{u.telefone}</p>
+                      </td>
+                      <td className="py-4 px-6 text-center">
+                        <div className="relative inline-block">
+                          <button
+                            onClick={() => setOpenMenuId(openMenuId === u.id_usuario ? null : u.id_usuario)}
+                            aria-label={`Ações para ${u.nome_completo}`}
+                            className="text-[rgba(255,255,255,0.5)] hover:text-white transition-colors p-1"
+                          >
+                            <MoreVertical size={18} />
+                          </button>
+                          {openMenuId === u.id_usuario && (
+                            <div
+                              ref={menuRef}
+                              className="absolute right-0 top-full z-50 mt-2 w-44 overflow-hidden rounded-lg border border-[rgba(0,255,163,0.25)] bg-[rgba(11,31,42,0.98)] shadow-[0_8px_32px_rgba(0,0,0,0.5)] backdrop-blur-md"
+                            >
+                              <button
+                                onClick={() => abrirEditar(u)}
+                                className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-white transition-colors hover:bg-[rgba(0,255,163,0.1)]"
+                              >
+                                <Pencil size={15} className="text-[#00FFA3]" />
+                                Editar
+                              </button>
+                              <button
+                                onClick={() => { setOpenMenuId(null); setConfirmDelete(u); }}
+                                className="flex w-full items-center gap-3 border-t border-[rgba(255,255,255,0.08)] px-4 py-3 text-left text-sm text-[#FF3B5C] transition-colors hover:bg-[rgba(255,59,92,0.1)]"
+                              >
+                                <Trash2 size={15} />
+                                Desativar
+                              </button>
+                            </div>
                           )}
                         </div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="py-4 px-6">
-                    <span
-                      className={`px-3 py-1 rounded-full text-xs font-medium border ${getRoleBadgeColor(
-                        user.role
-                      )}`}
-                    >
-                      {user.role}
-                    </span>
-                  </td>
-                  <td className="py-4 px-6">
-                    <p className="text-sm text-[rgba(255,255,255,0.7)]">
-                      {user.organization}
-                    </p>
-                  </td>
-                  <td className="py-4 px-6">
-                    <div className="flex items-center gap-2">
-                      {user.status === "active" ? (
-                        <>
-                          <CheckCircle size={16} className="text-[#00FFA3]" />
-                          <span className="text-sm text-[#00FFA3]">Ativo</span>
-                        </>
-                      ) : (
-                        <>
-                          <XCircle size={16} className="text-[rgba(255,255,255,0.3)]" />
-                          <span className="text-sm text-[rgba(255,255,255,0.3)]">
-                            Inativo
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                  <td className="py-4 px-6">
-                    <p className="text-sm text-[rgba(255,255,255,0.7)]">
-                      {user.lastAccess}
-                    </p>
-                  </td>
-                  <td className="py-4 px-6 text-center">
-                    <div className="relative inline-block">
-                      <button
-                        onClick={() =>
-                          setOpenMenuId(openMenuId === user.id ? null : user.id)
-                        }
-                        aria-label={`Ações para ${user.name}`}
-                        className="text-[rgba(255,255,255,0.5)] hover:text-white transition-colors p-1"
-                      >
-                        <MoreVertical size={18} />
-                      </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
-                      {openMenuId === user.id && (
-                        <div
-                          ref={menuRef}
-                          className="absolute right-0 top-full z-50 mt-2 w-44 overflow-hidden rounded-lg border border-[rgba(0,255,163,0.25)] bg-[rgba(11,31,42,0.98)] shadow-[0_8px_32px_rgba(0,0,0,0.5)] backdrop-blur-md"
-                        >
-                          <button
-                            onClick={() => openEditForm(user)}
-                            className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-white transition-colors hover:bg-[rgba(0,255,163,0.1)]"
-                          >
-                            <Pencil size={15} className="text-[#00FFA3]" />
-                            Editar
-                          </button>
-                          <button
-                            onClick={() => {
-                              setOpenMenuId(null);
-                              setConfirmDelete(user);
-                            }}
-                            className="flex w-full items-center gap-3 border-t border-[rgba(255,255,255,0.08)] px-4 py-3 text-left text-sm text-[#FF3B5C] transition-colors hover:bg-[rgba(255,59,92,0.1)]"
-                          >
-                            <Trash2 size={15} />
-                            Deletar
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            {totalPaginas > 1 && (
+              <div className="flex items-center justify-between border-t border-[rgba(0,255,163,0.1)] px-6 py-4">
+                <p className="text-xs text-[rgba(255,255,255,0.5)]">
+                  Página {pagina} de {totalPaginas}
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setPagina((p) => Math.max(1, p - 1))}
+                    disabled={pagina <= 1}
+                    className="p-2 rounded-lg border border-[rgba(0,255,163,0.15)] text-white disabled:opacity-30 hover:border-[#00FFA3] transition-colors"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <button
+                    onClick={() => setPagina((p) => Math.min(totalPaginas, p + 1))}
+                    disabled={pagina >= totalPaginas}
+                    className="p-2 rounded-lg border border-[rgba(0,255,163,0.15)] text-white disabled:opacity-30 hover:border-[#00FFA3] transition-colors"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
       </GlowCard>
 
-      {/* Modal adicionar / editar */}
+      {/* Modal criar/editar */}
       {isFormOpen && (
         <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-[rgba(3,10,14,0.75)] p-4 backdrop-blur-sm"
-          onClick={() => setIsFormOpen(false)}
+          className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-[rgba(3,10,14,0.75)] p-4 py-10 backdrop-blur-sm"
+          onClick={() => !salvando && setIsFormOpen(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg rounded-2xl border border-[rgba(0,255,163,0.25)] bg-gradient-to-br from-[rgba(11,31,42,0.98)] to-[rgba(8,20,25,0.98)] p-8 shadow-[0_0_60px_rgba(0,255,163,0.2)]"
+            className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-2xl border border-[rgba(0,255,163,0.25)] bg-gradient-to-br from-[rgba(11,31,42,0.98)] to-[rgba(8,20,25,0.98)] shadow-[0_0_60px_rgba(0,255,163,0.2)]"
           >
-            <div className="mb-6 flex items-start justify-between">
+            <div className="flex flex-shrink-0 items-start justify-between border-b border-[rgba(255,255,255,0.08)] p-8 pb-5">
               <h2 className="text-xl font-bold uppercase tracking-wider text-white">
-                {editingUser ? "Editar Usuário" : "Adicionar Usuário"}
+                {editando ? "Editar Usuário" : "Adicionar Usuário"}
               </h2>
-              <button
-                onClick={() => setIsFormOpen(false)}
-                aria-label="Fechar"
-                className="text-[rgba(255,255,255,0.5)] transition-colors hover:text-white"
-              >
+              <button onClick={() => setIsFormOpen(false)} aria-label="Fechar" className="text-[rgba(255,255,255,0.5)] hover:text-white transition-colors">
                 <X size={20} />
               </button>
             </div>
 
-            <div className="space-y-5">
-              <div>
-                <label className="mb-2 block text-xs uppercase tracking-wider text-[rgba(255,255,255,0.7)]">
-                  Nome completo
-                </label>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="Dr. João Silva"
-                  className="w-full rounded-lg border border-[rgba(0,255,163,0.15)] bg-[rgba(255,255,255,0.05)] px-4 py-3 text-white placeholder-[rgba(255,255,255,0.3)] transition-colors focus:border-[#00FFA3] focus:outline-none"
-                />
-              </div>
+            <div className="overflow-y-auto p-8 pt-5">
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+              <Campo label="Nome" erro={errosCampo.nome}>
+                <input value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} className={inputCls} />
+              </Campo>
+              <Campo label="Sobrenome" erro={errosCampo.sobrenome}>
+                <input value={form.sobrenome} onChange={(e) => setForm({ ...form, sobrenome: e.target.value })} className={inputCls} />
+              </Campo>
 
-              <div>
-                <label className="mb-2 block text-xs uppercase tracking-wider text-[rgba(255,255,255,0.7)]">
-                  E-mail
-                </label>
-                <input
-                  type="email"
-                  value={form.email}
-                  onChange={(e) => setForm({ ...form, email: e.target.value })}
-                  placeholder="nome@saude.gov.br"
-                  className="w-full rounded-lg border border-[rgba(0,255,163,0.15)] bg-[rgba(255,255,255,0.05)] px-4 py-3 text-white placeholder-[rgba(255,255,255,0.3)] transition-colors focus:border-[#00FFA3] focus:outline-none"
-                />
-              </div>
+              {!editando && (
+                <Campo label="CPF (11 dígitos)" erro={errosCampo.cpf}>
+                  <input
+                    value={form.cpf}
+                    onChange={(e) => setForm({ ...form, cpf: e.target.value.replace(/\D/g, "") })}
+                    maxLength={11}
+                    className={inputCls}
+                  />
+                </Campo>
+              )}
+              <Campo label="E-mail" erro={errosCampo.email}>
+                <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={inputCls} />
+              </Campo>
 
-              <div>
-                <label className="mb-2 block text-xs uppercase tracking-wider text-[rgba(255,255,255,0.7)]">
-                  Cargo
-                </label>
+              <Campo label="Telefone (com DDD)" erro={errosCampo.telefone}>
+                <input
+                  value={form.telefone}
+                  onChange={(e) => setForm({ ...form, telefone: e.target.value.replace(/\D/g, "") })}
+                  maxLength={11}
+                  className={inputCls}
+                />
+              </Campo>
+              <Campo label={editando ? "Nova senha (opcional)" : "Senha"} erro={errosCampo.senha}>
+                <input type="password" value={form.senha} onChange={(e) => setForm({ ...form, senha: e.target.value })} className={inputCls} />
+              </Campo>
+
+              <Campo label="Cargo" erro={errosCampo.cargo_id}>
                 <select
-                  value={form.role}
-                  onChange={(e) => setForm({ ...form, role: e.target.value })}
-                  className="w-full rounded-lg border border-[rgba(0,255,163,0.15)] bg-[rgba(255,255,255,0.05)] px-4 py-3 text-white transition-colors focus:border-[#00FFA3] focus:outline-none"
+                  value={form.cargo_id}
+                  onChange={(e) => setForm({ ...form, cargo_id: Number(e.target.value) })}
+                  className={inputCls}
                 >
-                  {roles.map((role) => (
-                    <option key={role} value={role} className="bg-[#0B1F2A]">
-                      {role}
+                  <option value="">Selecione...</option>
+                  {cargos.map((c) => (
+                    <option key={c.id_cargo} value={c.id_cargo} className="bg-[#0B1F2A]">
+                      {c.nome_cargo}
                     </option>
                   ))}
                 </select>
+              </Campo>
+              <Campo label="Organização" erro={errosCampo.organizacao_id}>
+                <select
+                  value={form.organizacao_id}
+                  onChange={(e) => setForm({ ...form, organizacao_id: Number(e.target.value) })}
+                  className={inputCls}
+                >
+                  <option value="">Selecione...</option>
+                  {organizacoes.map((o) => (
+                    <option key={o.id_organizacao} value={o.id_organizacao} className="bg-[#0B1F2A]">
+                      {o.nome_organizacao}
+                    </option>
+                  ))}
+                </select>
+              </Campo>
+
+              <div className="sm:col-span-2 flex items-center gap-3 pt-1">
+                <input
+                  id="is_admin"
+                  type="checkbox"
+                  checked={form.is_admin}
+                  onChange={(e) => setForm({ ...form, is_admin: e.target.checked })}
+                  className="h-4 w-4 accent-[#00FFA3]"
+                />
+                <label htmlFor="is_admin" className="text-sm text-[rgba(255,255,255,0.75)]">
+                  Conceder privilégio de administrador
+                </label>
               </div>
 
-              <div>
-                <label className="mb-2 block text-xs uppercase tracking-wider text-[rgba(255,255,255,0.7)]">
-                  Organização
-                </label>
-                <input
-                  type="text"
-                  value={form.organization}
-                  onChange={(e) => setForm({ ...form, organization: e.target.value })}
-                  placeholder="Secretaria de Saúde - SP"
-                  className="w-full rounded-lg border border-[rgba(0,255,163,0.15)] bg-[rgba(255,255,255,0.05)] px-4 py-3 text-white placeholder-[rgba(255,255,255,0.3)] transition-colors focus:border-[#00FFA3] focus:outline-none"
-                />
-              </div>
+              {(
+                <>
+                  <div className="sm:col-span-2 mt-2 border-t border-[rgba(255,255,255,0.08)] pt-5">
+                    <p className="mb-1 text-xs uppercase tracking-wider text-[rgba(255,255,255,0.5)]">Endereço</p>
+                    {editando && (
+                      <p className="mb-4 text-xs text-[rgba(255,184,0,0.85)]">
+                        A API não devolve o endereço já cadastrado — preencha novamente.
+                      </p>
+                    )}
+                  </div>
+
+                  <Campo label="Tipo de logradouro">
+                    <select
+                      value={form.endereco.tipo_logradouro}
+                      onChange={(e) => setForm({ ...form, endereco: { ...form.endereco, tipo_logradouro: e.target.value } })}
+                      className={inputCls}
+                    >
+                      {["Rua", "Avenida", "Alameda", "Travessa", "Rodovia"].map((t) => (
+                        <option key={t} value={t} className="bg-[#0B1F2A]">{t}</option>
+                      ))}
+                    </select>
+                  </Campo>
+                  <Campo label="Logradouro" erro={errosCampo.logradouro}>
+                    <input
+                      value={form.endereco.logradouro}
+                      onChange={(e) => setForm({ ...form, endereco: { ...form.endereco, logradouro: e.target.value } })}
+                      className={inputCls}
+                    />
+                  </Campo>
+
+                  <Campo label="Número" erro={errosCampo.numero}>
+                    <input
+                      type="number"
+                      value={form.endereco.numero || ""}
+                      onChange={(e) => setForm({ ...form, endereco: { ...form.endereco, numero: Number(e.target.value) } })}
+                      className={inputCls}
+                    />
+                  </Campo>
+                  <Campo label="CEP (opcional)">
+                    <input
+                      value={form.endereco.cep ?? ""}
+                      onChange={(e) => setForm({ ...form, endereco: { ...form.endereco, cep: e.target.value } })}
+                      className={inputCls}
+                    />
+                  </Campo>
+
+                  <Campo label="Cidade" erro={errosCampo.cidade}>
+                    <input
+                      value={form.endereco.cidade}
+                      onChange={(e) => setForm({ ...form, endereco: { ...form.endereco, cidade: e.target.value } })}
+                      className={inputCls}
+                    />
+                  </Campo>
+                  <Campo label="UF" erro={errosCampo.estado_uf}>
+                    <input
+                      value={form.endereco.estado_uf}
+                      onChange={(e) => setForm({ ...form, endereco: { ...form.endereco, estado_uf: e.target.value.toUpperCase() } })}
+                      maxLength={2}
+                      className={inputCls}
+                    />
+                  </Campo>
+
+                  <div className="sm:col-span-2">
+                    <Campo label="Complemento (opcional)">
+                      <input
+                        value={form.endereco.complemento ?? ""}
+                        onChange={(e) => setForm({ ...form, endereco: { ...form.endereco, complemento: e.target.value } })}
+                        className={inputCls}
+                      />
+                    </Campo>
+                  </div>
+                </>
+              )}
+            </div>
             </div>
 
-            <div className="mt-8 flex gap-3">
+            <div className="flex flex-shrink-0 gap-3 border-t border-[rgba(255,255,255,0.08)] p-8 pt-5">
               <button
                 onClick={() => setIsFormOpen(false)}
-                className="flex-1 rounded-lg border border-[rgba(0,255,163,0.15)] bg-[rgba(255,255,255,0.05)] py-3 text-sm font-medium text-white transition-all hover:border-[#00FFA3]"
+                disabled={salvando}
+                className="flex-1 rounded-lg border border-[rgba(0,255,163,0.15)] bg-[rgba(255,255,255,0.05)] py-3 text-sm font-medium text-white transition-all hover:border-[#00FFA3] disabled:opacity-50"
               >
                 Cancelar
               </button>
               <button
-                onClick={handleSave}
-                className="flex-1 rounded-lg bg-gradient-to-r from-[#00FFA3] to-[#6C5CE7] py-3 text-sm font-bold uppercase tracking-wider text-[#0B1F2A] transition-all hover:shadow-[0_0_30px_rgba(0,255,163,0.5)]"
+                onClick={handleSalvar}
+                disabled={salvando}
+                className="flex-1 rounded-lg bg-gradient-to-r from-[#00FFA3] to-[#6C5CE7] py-3 text-sm font-bold uppercase tracking-wider text-[#0B1F2A] transition-all hover:shadow-[0_0_30px_rgba(0,255,163,0.5)] disabled:opacity-60"
               >
-                {editingUser ? "Salvar" : "Adicionar"}
+                {salvando ? "Salvando..." : editando ? "Salvar" : "Adicionar"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Confirmação de exclusão */}
+      {/* Confirmação de desativação */}
       {confirmDelete && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-[rgba(3,10,14,0.75)] p-4 backdrop-blur-sm"
-          onClick={() => setConfirmDelete(null)}
+          onClick={() => !excluindo && setConfirmDelete(null)}
         >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-2xl border border-[rgba(255,59,92,0.3)] bg-gradient-to-br from-[rgba(11,31,42,0.98)] to-[rgba(8,20,25,0.98)] p-8 shadow-[0_0_60px_rgba(255,59,92,0.2)]"
-          >
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl border border-[rgba(255,59,92,0.3)] bg-gradient-to-br from-[rgba(11,31,42,0.98)] to-[rgba(8,20,25,0.98)] p-8 shadow-[0_0_60px_rgba(255,59,92,0.2)]">
             <div className="mb-4 flex items-center gap-3">
               <Trash2 size={22} className="text-[#FF3B5C]" />
-              <h2 className="text-lg font-bold uppercase tracking-wider text-white">
-                Deletar usuário
-              </h2>
+              <h2 className="text-lg font-bold uppercase tracking-wider text-white">Desativar usuário</h2>
             </div>
             <p className="mb-8 text-sm text-[rgba(255,255,255,0.7)]">
-              Tem certeza que deseja remover{" "}
-              <span className="font-bold text-white">{confirmDelete.name}</span>? Essa ação
-              não pode ser desfeita.
+              Tem certeza que deseja desativar <span className="font-bold text-white">{confirmDelete.nome_completo}</span>? O acesso dele será revogado.
             </p>
             <div className="flex gap-3">
               <button
                 onClick={() => setConfirmDelete(null)}
-                className="flex-1 rounded-lg border border-[rgba(0,255,163,0.15)] bg-[rgba(255,255,255,0.05)] py-3 text-sm font-medium text-white transition-all hover:border-[#00FFA3]"
+                disabled={excluindo}
+                className="flex-1 rounded-lg border border-[rgba(0,255,163,0.15)] bg-[rgba(255,255,255,0.05)] py-3 text-sm font-medium text-white transition-all hover:border-[#00FFA3] disabled:opacity-50"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleDelete}
-                className="flex-1 rounded-lg bg-[#FF3B5C] py-3 text-sm font-bold uppercase tracking-wider text-white transition-all hover:shadow-[0_0_30px_rgba(255,59,92,0.5)]"
+                disabled={excluindo}
+                className="flex-1 rounded-lg bg-[#FF3B5C] py-3 text-sm font-bold uppercase tracking-wider text-white transition-all hover:shadow-[0_0_30px_rgba(255,59,92,0.5)] disabled:opacity-60"
               >
-                Deletar
+                {excluindo ? "Desativando..." : "Desativar"}
               </button>
             </div>
           </div>
@@ -655,3 +698,22 @@ export function UsersPage() {
     </div>
   );
 }
+
+const inputCls =
+  "w-full rounded-lg border border-[rgba(0,255,163,0.15)] bg-[rgba(255,255,255,0.05)] px-4 py-3 text-white placeholder-[rgba(255,255,255,0.3)] transition-colors focus:border-[#00FFA3] focus:outline-none";
+
+function Campo({ label, erro, children }: { label: string; erro?: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="mb-2 block text-xs uppercase tracking-wider text-[rgba(255,255,255,0.7)]">{label}</label>
+      {children}
+      {erro && (
+        <p className="mt-1.5 flex items-center gap-1 text-xs text-[#FF3B5C]">
+          <AlertCircle size={12} />
+          {erro}
+        </p>
+      )}
+    </div>
+  );
+}
+
