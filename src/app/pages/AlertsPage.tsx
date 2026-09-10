@@ -1,235 +1,179 @@
-import { AlertTriangle, AlertCircle, Bell, MapPin, Clock, TrendingUp } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, Send, Users, CheckCircle2, RotateCcw } from "lucide-react";
 import { GlowCard } from "../components/GlowCard";
-import { ExportButton } from "../components/ExportButton";
-import { motion } from "motion/react";
+import { api } from "../../lib/api/endpoints";
+import { ApiError } from "../../lib/api/client";
+import { mensagemDeErro } from "../../lib/api/useResource";
+import type { AlertaResponse } from "../../lib/api/types";
 
-const alerts = [
-  {
-    id: 1,
-    title: "Risco Crítico de Surto de Dengue",
-    location: "Região Nordeste - 12 municípios",
-    severity: "critical",
-    confidence: 94,
-    timestamp: "Há 15 minutos",
-    description: "Modelo preditivo detectou aumento exponencial de casos. Intervenção urgente necessária.",
-    recommendations: [
-      "Mobilizar equipes de vigilância epidemiológica",
-      "Intensificar campanhas de eliminação de focos",
-      "Preparar estoques de medicamentos e testes",
-    ]
-  },
-  {
-    id: 2,
-    title: "Saturação de Leitos UTI",
-    location: "São Paulo - Capital",
-    severity: "high",
-    confidence: 87,
-    timestamp: "Há 1 hora",
-    description: "Previsão de 98% de ocupação nas próximas 48h. Risco de colapso do sistema.",
-    recommendations: [
-      "Ativar protocolo de transferência de pacientes",
-      "Expandir leitos temporários",
-      "Comunicar secretarias regionais",
-    ]
-  },
-  {
-    id: 3,
-    title: "Aumento de Síndrome Respiratória",
-    location: "Região Norte - 5 estados",
-    severity: "medium",
-    confidence: 91,
-    timestamp: "Há 3 horas",
-    description: "Crescimento atípico de 45% em casos respiratórios. Monitoramento contínuo ativo.",
-    recommendations: [
-      "Reforçar estoque de EPIs",
-      "Ampliar testagem em postos de saúde",
-      "Alertar rede hospitalar",
-    ]
-  },
-  {
-    id: 4,
-    title: "Queda na Cobertura Vacinal",
-    location: "Nacional",
-    severity: "medium",
-    confidence: 76,
-    timestamp: "Há 6 horas",
-    description: "Meta de 90% não será atingida no trimestre. Risco de ressurgimento de doenças.",
-    recommendations: [
-      "Intensificar campanhas de conscientização",
-      "Mobilizar agentes comunitários",
-      "Expandir horários de vacinação",
-    ]
-  },
+const LIMITE_MENSAGEM = 500;
+
+const UFS = [
+  "AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS",
+  "MT", "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC",
+  "SE", "SP", "TO",
 ];
 
-function getSeverityColor(severity: string) {
-  switch (severity) {
-    case "critical":
-      return {
-        bg: "bg-[rgba(255,59,92,0.15)]",
-        border: "border-[rgba(255,59,92,0.5)]",
-        text: "text-[#FF3B5C]",
-        glow: "shadow-[0_0_30px_rgba(255,59,92,0.3)]",
-      };
-    case "high":
-      return {
-        bg: "bg-[rgba(255,184,0,0.15)]",
-        border: "border-[rgba(255,184,0,0.5)]",
-        text: "text-[#FFB800]",
-        glow: "shadow-[0_0_30px_rgba(255,184,0,0.3)]",
-      };
-    case "medium":
-      return {
-        bg: "bg-[rgba(0,212,255,0.15)]",
-        border: "border-[rgba(0,212,255,0.5)]",
-        text: "text-[#00D4FF]",
-        glow: "shadow-[0_0_30px_rgba(0,212,255,0.3)]",
-      };
-    default:
-      return {
-        bg: "bg-[rgba(255,255,255,0.05)]",
-        border: "border-[rgba(255,255,255,0.2)]",
-        text: "text-[rgba(255,255,255,0.7)]",
-        glow: "",
-      };
-  }
-}
-
+/**
+ * Disparo de alerta por SMS, segmentado por UF.
+ *
+ * A API não tem histórico nem listagem de alertas — é uma ação única,
+ * sem estado persistente do lado do front. Cada envio é independente.
+ */
 export function AlertsPage() {
+  const [mensagem, setMensagem] = useState("");
+  const [uf, setUf] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [resultado, setResultado] = useState<AlertaResponse | null>(null);
+
+  const caracteresRestantes = LIMITE_MENSAGEM - mensagem.length;
+  const podeEnviar = mensagem.trim().length > 0 && caracteresRestantes >= 0 && uf !== "" && !enviando;
+
+  const handleEnviar = async () => {
+    if (!podeEnviar) return;
+    setEnviando(true);
+    setErro(null);
+    setResultado(null);
+    try {
+      const resposta = await api.alertas.disparar({ mensagem: mensagem.trim(), estado_uf: uf });
+      setResultado(resposta);
+    } catch (e) {
+      // FALHA_ENVIO_ALERTA (502): o gateway de SMS recusou o lote — nada foi
+      // registrado. Mostramos a mensagem real da API, não uma genérica.
+      setErro(mensagemDeErro(e));
+      if (!(e instanceof ApiError)) console.error(e);
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  const handleNovoAlerta = () => {
+    setResultado(null);
+    setErro(null);
+    setMensagem("");
+    setUf("");
+  };
+
   return (
     <div className="p-8 space-y-8">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-white uppercase tracking-wider mb-2 flex items-center gap-3">
-            <Bell size={32} className="text-[#FF3B5C]" />
-            Central de Alertas
-          </h1>
-          <p className="text-[rgba(255,255,255,0.6)]">
-            Sistema nacional de monitoramento de emergências em saúde pública
-          </p>
-        </div>
-        <div className="flex gap-3">
-          <ExportButton pageName="Relatório de Alertas" />
-          <button className="px-6 py-3 rounded-lg bg-[rgba(255,255,255,0.05)] border border-[rgba(0,255,163,0.15)] text-white hover:border-[#00FFA3] transition-all text-sm uppercase font-medium">
-            Filtros
-          </button>
-          <button className="px-6 py-3 rounded-lg bg-gradient-to-r from-[#00FFA3] to-[#6C5CE7] text-[#0B1F2A] font-bold uppercase hover:shadow-[0_0_30px_rgba(0,255,163,0.5)] transition-all text-sm">
-            Novo Alerta
-          </button>
-        </div>
+      <div>
+        <h1 className="mb-2 flex items-center gap-3 text-3xl font-bold uppercase tracking-wider text-white">
+          <AlertTriangle size={30} className="text-[#FFB800]" />
+          Central de Alertas
+        </h1>
+        <p className="text-[rgba(255,255,255,0.6)]">
+          Disparo de SMS segmentado por estado • Ação imediata, sem confirmação prévia
+        </p>
       </div>
 
-      {/* Critical Banner */}
-      <motion.div
-        animate={{ opacity: [0.8, 1, 0.8] }}
-        transition={{ duration: 2, repeat: Infinity }}
-        className="p-6 rounded-xl bg-gradient-to-r from-[rgba(255,59,92,0.2)] to-[rgba(255,59,92,0.1)] border-2 border-[#FF3B5C] shadow-[0_0_40px_rgba(255,59,92,0.4)]"
-      >
-        <div className="flex items-start gap-4">
-          <AlertTriangle size={32} className="text-[#FF3B5C] flex-shrink-0 animate-pulse" />
-          <div className="flex-1">
-            <h2 className="text-xl font-bold text-white uppercase mb-2">
-              3 Alertas Críticos Ativos
-            </h2>
-            <p className="text-[rgba(255,255,255,0.8)] mb-4">
-              Requerem ação imediata • Protocolo de emergência ativado
-            </p>
-            <div className="flex gap-3">
-              <button className="px-4 py-2 rounded-lg bg-[#FF3B5C] text-white font-medium hover:bg-[#FF2046] transition-colors text-sm">
-                Ver Protocolos
-              </button>
-              <button className="px-4 py-2 rounded-lg bg-[rgba(255,255,255,0.1)] text-white hover:bg-[rgba(255,255,255,0.15)] transition-colors text-sm">
-                Notificar Equipes
+      <div className="mx-auto max-w-2xl">
+        <GlowCard>
+          {resultado ? (
+            <div className="flex flex-col items-center gap-4 py-6 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[rgba(0,255,163,0.12)]">
+                <CheckCircle2 size={30} className="text-[#00FFA3]" />
+              </div>
+              <div>
+                <p className="text-lg font-bold uppercase tracking-wide text-white">
+                  Alerta registrado
+                </p>
+                <p className="mt-1 text-sm text-[rgba(255,255,255,0.6)]">
+                  Destino: {resultado.estado_uf_destino} • Alerta nº {resultado.id_alerta}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 rounded-lg border border-[rgba(0,255,163,0.15)] bg-[rgba(255,255,255,0.04)] px-5 py-3">
+                <Users size={18} className="text-[#00D4FF]" />
+                <span className="text-sm text-white">
+                  {resultado.destinatarios === 0 ? (
+                    <span className="text-[#FFB800]">
+                      0 destinatários — nenhum usuário cadastrado nessa UF
+                    </span>
+                  ) : (
+                    <>
+                      <strong>{resultado.destinatarios.toLocaleString("pt-BR")}</strong> destinatário(s)
+                      receberam o SMS
+                    </>
+                  )}
+                </span>
+              </div>
+
+              <button
+                onClick={handleNovoAlerta}
+                className="mt-2 flex items-center gap-2 rounded-lg border border-[rgba(0,255,163,0.2)] bg-[rgba(255,255,255,0.05)] px-5 py-2.5 text-sm text-white transition-colors hover:border-[#00FFA3]"
+              >
+                <RotateCcw size={15} />
+                Disparar novo alerta
               </button>
             </div>
-          </div>
-        </div>
-      </motion.div>
+          ) : (
+            <div className="space-y-6">
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <label className="text-xs uppercase tracking-wider text-[rgba(255,255,255,0.7)]">
+                    Mensagem
+                  </label>
+                  <span
+                    className={`text-xs ${
+                      caracteresRestantes < 0 ? "text-[#FF3B5C]" : "text-[rgba(255,255,255,0.4)]"
+                    }`}
+                  >
+                    {caracteresRestantes} caracteres restantes
+                  </span>
+                </div>
+                <textarea
+                  value={mensagem}
+                  onChange={(e) => setMensagem(e.target.value)}
+                  rows={5}
+                  placeholder="Escreva a mensagem que será enviada por SMS..."
+                  className="w-full resize-none rounded-lg border border-[rgba(0,255,163,0.15)] bg-[rgba(255,255,255,0.05)] px-4 py-3 text-white placeholder-[rgba(255,255,255,0.3)] transition-colors focus:border-[#00FFA3] focus:outline-none"
+                />
+              </div>
 
-      {/* Alerts List */}
-      <div className="space-y-4">
-        {alerts.map((alert, idx) => {
-          const colors = getSeverityColor(alert.severity);
+              <div>
+                <label className="mb-2 block text-xs uppercase tracking-wider text-[rgba(255,255,255,0.7)]">
+                  Estado de destino
+                </label>
+                <select
+                  value={uf}
+                  onChange={(e) => setUf(e.target.value)}
+                  className="w-full rounded-lg border border-[rgba(0,255,163,0.15)] bg-[rgba(255,255,255,0.05)] px-4 py-3 text-white transition-colors focus:border-[#00FFA3] focus:outline-none"
+                >
+                  <option value="">Selecione a UF...</option>
+                  {UFS.map((sigla) => (
+                    <option key={sigla} value={sigla} className="bg-[#0B1F2A]">
+                      {sigla}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-          return (
-            <motion.div
-              key={alert.id}
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: idx * 0.1 }}
-            >
-              <GlowCard
-                className={`${colors.bg} border ${colors.border} ${colors.glow}`}
-                hover={true}
-              >
-                <div className="flex gap-6">
-                  {/* Severity Indicator */}
-                  <div className="flex flex-col items-center">
-                    <AlertCircle size={32} className={colors.text} />
-                    <span className={`text-xs font-bold uppercase mt-2 ${colors.text}`}>
-                      {alert.severity}
-                    </span>
-                  </div>
-
-                  {/* Content */}
-                  <div className="flex-1">
-                    <div className="flex items-start justify-between mb-3">
-                      <div>
-                        <h3 className="text-xl font-bold text-white mb-2">{alert.title}</h3>
-                        <div className="flex items-center gap-4 text-sm text-[rgba(255,255,255,0.7)]">
-                          <div className="flex items-center gap-1">
-                            <MapPin size={14} />
-                            <span>{alert.location}</span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <Clock size={14} />
-                            <span>{alert.timestamp}</span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-xs text-[rgba(255,255,255,0.5)] mb-1">Confiança IA</div>
-                        <div className="text-2xl font-bold text-[#00FFA3]">{alert.confidence}%</div>
-                      </div>
-                    </div>
-
-                    <p className="text-[rgba(255,255,255,0.8)] mb-4">{alert.description}</p>
-
-                    {/* Recommendations */}
-                    <div className="mb-4">
-                      <h4 className="text-sm font-bold text-white uppercase mb-2 flex items-center gap-2">
-                        <TrendingUp size={14} />
-                        Recomendações Emergenciais
-                      </h4>
-                      <ul className="space-y-2">
-                        {alert.recommendations.map((rec, idx) => (
-                          <li
-                            key={idx}
-                            className="flex items-start gap-2 text-sm text-[rgba(255,255,255,0.7)]"
-                          >
-                            <span className={`${colors.text} mt-1`}>•</span>
-                            <span>{rec}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex gap-3">
-                      <button className="px-4 py-2 rounded-lg bg-gradient-to-r from-[#00FFA3] to-[#6C5CE7] text-[#0B1F2A] font-medium hover:shadow-[0_0_20px_rgba(0,255,163,0.4)] transition-all text-sm">
-                        Executar Protocolo
-                      </button>
-                      <button className="px-4 py-2 rounded-lg bg-[rgba(255,255,255,0.05)] border border-[rgba(0,255,163,0.15)] text-white hover:border-[#00FFA3] transition-all text-sm">
-                        Enviar SMS
-                      </button>
-                    </div>
+              {erro && (
+                <div className="flex items-start gap-3 rounded-lg border border-[rgba(255,59,92,0.4)] bg-[rgba(255,59,92,0.1)] p-4">
+                  <AlertTriangle size={18} className="mt-0.5 flex-shrink-0 text-[#FF3B5C]" />
+                  <div>
+                    <p className="text-sm font-medium text-white">Não foi possível disparar o alerta</p>
+                    <p className="mt-1 text-xs text-[rgba(255,255,255,0.7)]">{erro}</p>
                   </div>
                 </div>
-              </GlowCard>
-            </motion.div>
-          );
-        })}
+              )}
+
+              <button
+                onClick={handleEnviar}
+                disabled={!podeEnviar}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-[#FFB800] to-[#FF3B5C] py-3.5 text-sm font-bold uppercase tracking-wider text-[#0B1F2A] transition-all hover:shadow-[0_0_30px_rgba(255,184,0,0.4)] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Send size={16} />
+                {enviando ? "Enviando..." : "Disparar alerta"}
+              </button>
+
+              <p className="text-center text-xs text-[rgba(255,255,255,0.4)]">
+                O disparo é imediato e não pode ser desfeito. Não existe histórico de alertas nesta versão.
+              </p>
+            </div>
+          )}
+        </GlowCard>
       </div>
     </div>
   );
