@@ -113,8 +113,12 @@ export const apoio = {
 /* Chat — seção 9 */
 
 export const chat = {
+  /**
+   * Consultas ao Select AI podem levar mais de um minuto (75s observados em
+   * teste). Timeout de 120s evita esperar para sempre se algo travar.
+   */
   perguntar: (dados: ChatRequest, signal?: AbortSignal) =>
-    request<ChatResponse>("/chat", { method: "POST", body: dados, signal }),
+    request<ChatResponse>("/chat", { method: "POST", body: dados, signal, timeoutMs: 120_000 }),
 };
 
 export const api = { auth, dashboards, alertas, relatorios, usuarios, apoio, chat };

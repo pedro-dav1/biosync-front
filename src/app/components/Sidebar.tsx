@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Users,
   FileText,
+  Bot,
   LogOut
 } from "lucide-react";
 import { Logo } from "./Logo";
@@ -17,6 +18,7 @@ const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", route: "dashboard" },
   { icon: AlertTriangle, label: "Alertas", route: "alerts" },
   { icon: FileText, label: "Relatórios", route: "reports" },
+  { icon: Bot, label: "Assistente", route: "chat" },
   { icon: Users, label: "Usuários", route: "users" },
 ];
 

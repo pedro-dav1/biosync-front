@@ -104,11 +104,31 @@ interface RequestOptions {
   /** Rotas públicas (login) não mandam Authorization. */
   publico?: boolean;
   signal?: AbortSignal;
+  /**
+   * Aborta a requisição depois de X ms. Sem isso, uma consulta travada no
+   * backend (ex.: Select AI) fica pendurada indefinidamente. O Chat usa um
+   * valor bem mais alto que o padrão, porque consultas reais já levaram
+   * ~75 segundos nos testes.
+   */
+  timeoutMs?: number;
+}
+
+/** Combina um AbortSignal externo (se houver) com um timeout interno. */
+function combinarComTimeout(externo: AbortSignal | undefined, timeoutMs: number | undefined) {
+  if (!timeoutMs) return externo;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  externo?.addEventListener("abort", () => controller.abort());
+  // Limpa o timer assim que a requisição encerrar por qualquer motivo.
+  controller.signal.addEventListener("abort", () => clearTimeout(timer));
+  return controller.signal;
 }
 
 function montarUrl(path: string, query?: RequestOptions["query"]) {
-  const base = API_BASE_URL.startsWith("http") ? API_BASE_URL : `${window.location.origin}${API_BASE_URL}`;
-  const url = new URL(`${base}${path}`);  if (query) {
+  // Base explícita (window.location.origin): API_BASE_URL pode ser relativo
+  // (ex.: "/api/v1", usado com o proxy do Vite) ou absoluto — funciona nos dois casos.
+  const url = new URL(`${API_BASE_URL}${path}`, window.location.origin);
+  if (query) {
     for (const [chave, valor] of Object.entries(query)) {
       if (valor !== undefined && valor !== null && valor !== "") {
         url.searchParams.set(chave, String(valor));
@@ -139,7 +159,7 @@ async function extrairErro(response: Response): Promise<ApiError> {
 
 /** Chamada JSON. Lança ApiError ou NetworkError; nunca devolve erro no retorno. */
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = "GET", body, query, publico = false, signal } = options;
+  const { method = "GET", body, query, publico = false, signal, timeoutMs } = options;
 
   const headers: Record<string, string> = { Accept: "application/json" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -155,7 +175,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal,
+      signal: combinarComTimeout(signal, timeoutMs),
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;

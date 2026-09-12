@@ -5,9 +5,9 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { UsersPage } from "./pages/UsersPage";
 import { ReportsPage } from "./pages/ReportsPage";
+import { ChatPage } from "./pages/ChatPage";
 import { MobileDashboard } from "./pages/MobileDashboard";
 import { Sidebar } from "./components/Sidebar";
-import { AIAssistant } from "./components/AIAssistant";
 import { TopBar } from "./components/TopBar";
 import { LoadingScreen } from "./components/LoadingScreen";
 import { IntroScreen } from "./components/IntroScreen";
@@ -85,6 +85,8 @@ export default function App() {
         return isAdmin ? <AlertsPage /> : <DashboardPage />;
       case "reports":
         return <ReportsPage />;
+      case "chat":
+        return <ChatPage />;
       case "users":
         // Rota de admin: as rotas /usuarios respondem 403 pra usuário comum.
         return isAdmin ? <UsersPage /> : <DashboardPage />;
@@ -112,7 +114,6 @@ export default function App() {
           </AnimatePresence>
         </main>
       </div>
-      <AIAssistant />
       <Toaster
         position="top-right"
         toastOptions={{
