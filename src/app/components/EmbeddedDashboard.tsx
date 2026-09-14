@@ -6,8 +6,20 @@ interface EmbeddedDashboardProps {
   src?: string;
   /** Título usado para acessibilidade e no estado vazio */
   title: string;
-  /** Altura do iframe em px */
+  /**
+   * Altura fixa em px. Ignorada se `aspectRatio` for informado — prefira
+   * `aspectRatio` sempre que souber a proporção real do relatório, porque
+   * altura fixa distorce/deixa sobra quando a largura do container muda.
+   */
   height?: number;
+  /**
+   * Proporção largura/altura do relatório, no formato aceito pela propriedade
+   * CSS aspect-ratio (ex.: "1140 / 541.25", copiado direto do HTML de embed
+   * que o Power BI/Looker fornecem). Com isso o iframe escala mantendo a
+   * proporção original, em vez de esticar ou cortar a barra de navegação
+   * interna do relatório.
+   */
+  aspectRatio?: string;
 }
 
 /**
@@ -16,14 +28,16 @@ interface EmbeddedDashboardProps {
  * Enquanto a URL não for informada, mostra um placeholder — assim a tela
  * continua navegável e é só preencher `src` quando o embed estiver pronto.
  */
-export function EmbeddedDashboard({ src, title, height = 720 }: EmbeddedDashboardProps) {
+export function EmbeddedDashboard({ src, title, height = 720, aspectRatio }: EmbeddedDashboardProps) {
   const [loaded, setLoaded] = useState(false);
+
+  const tamanhoContainer = aspectRatio ? { aspectRatio } : { height };
 
   if (!src) {
     return (
       <div
         className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-[rgba(0,255,163,0.3)] bg-[rgba(255,255,255,0.02)] text-center px-8"
-        style={{ height }}
+        style={tamanhoContainer}
       >
         <AlertTriangle size={28} className="text-[#FFB800]" />
         <p className="text-sm font-medium text-white">Embed não configurado</p>
@@ -36,12 +50,12 @@ export function EmbeddedDashboard({ src, title, height = 720 }: EmbeddedDashboar
   }
 
   return (
-    <div className="relative overflow-hidden rounded-xl border border-[rgba(0,255,163,0.15)] bg-[rgba(255,255,255,0.02)]">
+    <div
+      className="relative overflow-hidden rounded-xl border border-[rgba(0,255,163,0.15)] bg-[rgba(255,255,255,0.02)]"
+      style={tamanhoContainer}
+    >
       {!loaded && (
-        <div
-          className="absolute inset-0 flex items-center justify-center"
-          style={{ height }}
-        >
+        <div className="absolute inset-0 flex items-center justify-center">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgba(0,255,163,0.2)] border-t-[#00FFA3]" />
         </div>
       )}
@@ -49,8 +63,8 @@ export function EmbeddedDashboard({ src, title, height = 720 }: EmbeddedDashboar
         src={src}
         title={title}
         onLoad={() => setLoaded(true)}
-        className="w-full"
-        style={{ height, border: "none" }}
+        className="absolute inset-0 h-full w-full"
+        style={{ border: "none" }}
         allowFullScreen
       />
       <a
