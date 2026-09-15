@@ -4,7 +4,6 @@ import {
   Send,
   AlertTriangle,
   Loader2,
-  Code2,
   Clock,
   Hash,
   User,
@@ -155,16 +154,6 @@ export function ChatPage() {
                       {(turno.resposta.tempo_ms / 1000).toFixed(1)}s
                     </span>
                   </div>
-
-                  <details className="group rounded-lg border border-[rgba(0,255,163,0.1)] bg-[rgba(0,0,0,0.2)]">
-                    <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs text-[rgba(255,255,255,0.5)] transition-colors hover:text-white">
-                      <Code2 size={12} />
-                      Ver SQL gerado
-                    </summary>
-                    <pre className="overflow-x-auto border-t border-[rgba(0,255,163,0.1)] px-3 py-2.5 text-xs text-[#00FFA3]">
-                      <code>{turno.resposta.sql_executado}</code>
-                    </pre>
-                  </details>
                 </div>
               )}
             </div>
